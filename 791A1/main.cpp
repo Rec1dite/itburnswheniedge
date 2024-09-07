@@ -7,8 +7,11 @@
 using namespace af;
 
 const float LOW_THRESH_RAT = 0.5;
-const float HIGH_THRESH_RAT = 0.4;
+const float HIGH_THRESH_RAT = 0.2;
 const float BLUR = 0.1;
+const int HOUGH_THETA_COUNT = 180 * 5;
+const int HOUGH_RHO_COUNT = 50 * 5;
+const int HOUGH_K = 20;
 
  void prewitt1(array &mag, array &dir, const array &in) {
      static float h1[] = {1, 1, 1};
@@ -25,7 +28,7 @@ const float BLUR = 0.1;
  }
 
 int main() {
-    try {
+	try {
 		info();
 
 		array inp = loadImage("../Dataset/jake.jpg", true) / 255.0;
@@ -52,7 +55,6 @@ int main() {
 
 		// Round dir to nearest pi/4, remap to [0, 3] cases
 		dir = round(dir / (Pi / 4.0)) % 4; // (0 -> 0|Pi ; 1 -> Pi/4 ; 2 -> Pi/2 ; 3 -> 3/4*Pi)
-		//dir = round(dir / (4.0 / Pi)) % 4; // (0 -> 0|Pi ; 1 -> Pi/4 ; 2 -> Pi/2 ; 3 -> 3/4*Pi)
 
 		// Non-max Suppression
 		array n1 = mag;
@@ -87,23 +89,90 @@ int main() {
 		// Weak edges (Apply hysteresis)
 		array weak = (grad < highThresh) && (grad >= lowThresh);
 
-		thresh = weak && (
-			shift(thresh, -1, 1)	|| shift(thresh, 0, 1)	|| shift(thresh, 1, 1) ||
-			shift(thresh, -1, 0)	|| shift(thresh, 0, 0)	|| shift(thresh, 1, 0) ||
-			shift(thresh, -1, -1)	|| shift(thresh, 0, -1)	|| shift(thresh, 1, -1)
-		);
-		thresh = thresh.as(f32);
+		thresh = thresh || (weak && (
+			shift(thresh, -1, 1) || shift(thresh, 0, 1) || shift(thresh, 1, 1) ||
+			shift(thresh, -1, 0) || shift(thresh, 0, 0) || shift(thresh, 1, 0) ||
+			shift(thresh, -1, -1) || shift(thresh, 0, -1) || shift(thresh, 1, -1)
+			));
 
 		//=============== Edge linking ===============//
+		array active = where(thresh);
 
+		// [0, Pi) x (-Inf, Inf) -> [0, THETA_COUNT) x [0, RHO_COUNT)
+		array hough = constant(0, HOUGH_THETA_COUNT, HOUGH_RHO_COUNT, f32);
+
+		int* indices = active.as(s32).host<int>();
+
+		array thetas = seq(0, HOUGH_THETA_COUNT - 1);
+		array nThetas = thetas.as(f32) * Pi / HOUGH_THETA_COUNT;
+		array coss = cos(nThetas);
+		array sins = sin(nThetas);
+
+		for (int i = 0; i < active.dims(0); i++) {
+			// Get normalized x and y
+			float x = (indices[i] % grad.dims(0)) / (float)grad.dims(0);
+			float y = (indices[i] / grad.dims(0)) / (float)grad.dims(1);
+
+			array rhos = (x * coss + y * sins) * (HOUGH_RHO_COUNT / 2 - 1); // Compute rho values
+
+			rhos += HOUGH_RHO_COUNT / 2; // Center vertically
+			rhos = round(rhos);
+
+			array coords = thetas + rhos * HOUGH_THETA_COUNT;
+
+			hough(coords) += 1;
+		}
+		hough /= max<float>(hough);
+
+		freeHost(indices);
+
+		// Find top k values
+		array top;
+		array topIndices;
+		topk(top, topIndices, flat(hough), HOUGH_K);
+
+		// Print
+		//std::cout << "TOP K:" << std::endl;
+		//af_print(top);
+
+		//std::cout << "INDICES:" << std::endl;
+		//af_print(topIndices);
+
+		// Decompose indices back into rho, theta
+		array topRhos = topIndices / HOUGH_THETA_COUNT;
+		array topThetas = topIndices % HOUGH_THETA_COUNT;
+
+		array houghTop = constant(0, HOUGH_THETA_COUNT, HOUGH_RHO_COUNT, f32);
+		//houghTop(topIndices) = 1;
+		houghTop(topThetas, span) += 0.5;
+		houghTop(span, topRhos) += 0.5;
+
+		array linked = constant(0, thresh.dims(), f32); // Initialize the linked edges array
+
+		// Draw lines found by the Hough transform
+		for (int i = 0; i < topIndices.elements(); ++i) {
+			float r = topRhos(i).scalar<float>();
+			float t = topThetas(i).scalar<float>();
+			float cos_t = cos(t);
+			float sin_t = sin(t);
+
+			// Iterate through image dimensions and mark the pixels forming the lines
+			for (int x = 0; x < thresh.dims(1); ++x) {
+				for (int y = 0; y < thresh.dims(0); ++y) {
+					if (std::abs(x * cos_t + y * sin_t - r) < 1.0f) {
+						linked(y, x) = 1.0f;
+					}
+				}
+			}
+		}
 
 		//=============== Display ===============//
 		array out = dX;
 
-		int numImgs = 8;
+		int numImgs = 10;
 		int w = std::min(4, numImgs);
 		int h = std::ceil(numImgs / 4.0f);
-		Window win(w*300, h*300, "COS791 A1");
+		Window win(w * 300, h * 300, "COS791 A1");
 		while (!win.close()) {
 			win.grid(h, w);
 			win(0, 0).image(inp, "Input");
@@ -113,7 +182,10 @@ int main() {
 			win(0, 2).image(dir / 4.0, "dir");
 			win(1, 2).image(mag, "mag");
 			win(0, 3).image(grad, "grad");
-			win(1, 3).image(thresh, "thresh");
+			win(1, 3).image(thresh.as(f32), "thresh");
+			win(2, 0).image(linked, "linked");
+			win(2, 1).image(transpose(hough), "hough");
+			win(2, 2).image(transpose(houghTop), "houghTop");
 			//win(0, 3).image((dir == 0).as(f32), "dir0");
 			//win(1, 3).image((dir == 1).as(f32), "dir1");
 			//win(2, 3).image((dir == 2).as(f32), "dir2");
