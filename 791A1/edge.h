@@ -39,9 +39,10 @@ public:
 		std::tie(mag, dir) = Pipeline::gradientCalculation(blur);
 		array grad = Pipeline::edgeThinning(dir, mag);
 		array thresh = Pipeline::thresholding(grad, conf.highThreshRat, conf.lowThreshRat);
-		std::tie(hough, houghTop, linked) = Pipeline::edgeLinking(thresh, grad, conf.houghThetaCount, conf.houghRhoCount, conf.houghK);
+		//std::tie(hough, houghTop, linked) = Pipeline::edgeLinking(thresh, grad, conf.houghThetaCount, conf.houghRhoCount, conf.houghK);
+		//linked = Pipeline::edgeLinkingLocal(thresh);
 
-		return { blur, mag, dir, grad, thresh, hough, houghTop, linked };
+		return { blur, mag, dir, grad, thresh, linked, linked, linked };
 	}
 
 	static std::pair<array, array> prewitt1(const array& in) {
@@ -185,26 +186,72 @@ public:
 
 		array linked = constant(0, thresh.dims(), f32); // Initialize the linked edges array
 
-		int* topIndicesHost = topIndices.as(s32).host<int>();
+		float* topRhosHost = topRhos.as(f32).host<float>();
+		float* topThetasHost = topThetas.as(f32).host<float>();
 
-		// Draw lines found by the Hough transform
 		for (int i = 0; i < k; i++) {
-			//float rho = topRhos(i) - HOUGH_RHO_COUNT / 2;
-			//float theta = topThetas(i) * Pi / HOUGH_THETA_COUNT;
-			float rho = (topIndicesHost[i] / thetaCount) - rhoCount / 2;
-			float theta = (topIndicesHost[i] % thetaCount) * Pi / thetaCount;
+			float rho = topRhosHost[i] - rhoCount / 2;
+			float theta = topThetasHost[i] * Pi / thetaCount;
 
-			// y = mx + c
-			float m = -1.0f / tan(theta);
-			float c = rho / sin(theta);
+			float cosTheta = cos(theta);
+			float sinTheta = sin(theta);
 
-			// Draw line
-			//linked = drawLine(linked, 0, c, linked.dims(0), m * linked.dims(0) + c);
+			if (fabs(sinTheta) > 1e-2) {
+				for (int x = 0; x < linked.dims(1); x++) {
+					int y = round((rho - x * cosTheta) / sinTheta);
+					if (y >= 0 && y < linked.dims(0)) {
+						linked(y, x) = 1;
+					}
+				}
+			} else {
+				for (int y = 0; y < linked.dims(0); y++) {
+					int x = round((rho - y * sinTheta) / cosTheta);
+					if (x >= 0 && x < linked.dims(1)) {
+						linked(y, x) = 1;
+					}
+				}
+			}
 		}
 
-		freeHost(topIndicesHost);
+		freeHost(topRhosHost);
+		freeHost(topThetasHost);
 
 		return { hough, houghTop, linked };
+	}
+
+	static array edgeLinkingLocal(const array& thresh) {
+		array linked = thresh.copy();
+
+		// Define the size of the neighborhood
+		int neighborhoodSize = 5;
+		int halfSize = neighborhoodSize / 2;
+
+		// Iterate through each pixel in the thresholded image
+		for (int y = halfSize; y < thresh.dims(0) - halfSize; y++) {
+			for (int x = halfSize; x < thresh.dims(1) - halfSize; x++) {
+				if (thresh(y, x).scalar<float>() == 0) {
+					continue; // Skip non-edge pixels
+				}
+
+				// Extract the local neighborhood
+				array neighborhood = thresh(seq(y - halfSize, y + halfSize), seq(x - halfSize, x + halfSize));
+
+				// Check for pairs of opposite points
+				for (int ny = -halfSize; ny <= halfSize; ny++) {
+					for (int nx = -halfSize; nx <= halfSize; nx++) {
+						if (nx == 0 && ny == 0) continue; // Skip the center pixel
+
+						int oppY = -ny, oppX = -nx;
+						if (neighborhood(halfSize + ny, halfSize + nx).scalar<float>() > 0 &&
+							neighborhood(halfSize + oppY, halfSize + oppX).scalar<float>() > 0) {
+
+							linked = drawLine(linked, x + nx, y + ny, x + oppX, y + oppY);
+						}
+					}
+				}
+			}
+		}
+		return linked;
 	}
 
 	//=============== Line drawing ===============//
@@ -253,8 +300,25 @@ public:
 
 	//=============== Error functions ===============//
 	static float meanSquareError(const array& a, const array& b) {
-		array diff = a - b;
-		return sum<float>(diff * diff) / a.elements();
+		//return (rand() % 1000) / 1000.0f;
+		array aBlur = bilateral(a.as(s16), 2, 10);
+		aBlur /= max<float>(aBlur);
+		array bBlur = bilateral(b.as(s16), 2, 10);
+		bBlur /= max<float>(bBlur);
+		array diff = aBlur - bBlur;
+		diff *= diff;
+
+		//Window win(1200, 300, "Debug");
+		//win.grid(1, 3);
+		//for (int i = 0; i < 50 && !win.close(); i++) {
+		//	win(0, 0).image(aBlur, "A");
+		//	win(0, 1).image(bBlur, "B");
+		//	win(0, 2).image(diff, "Diff");
+		//	win.show();
+		//}
+
+		return sum<float>(diff) / a.elements();
+		//return abs(sum<float>(a) - sum<float>(b));
 	}
 
 	//=============== Display ===============//
@@ -286,9 +350,9 @@ public:
 		win(1, 2).image(mag, "mag");
 		win(0, 3).image(grad, "grad");
 		win(1, 3).image(thresh.as(f32), "thresh");
-		win(2, 0).image(transpose(hough), "hough");
-		win(2, 1).image(transpose(houghTop), "houghTop");
-		win(2, 2).image(linked, "linked");
+		//win(2, 0).image(transpose(hough), "hough");
+		//win(2, 1).image(transpose(houghTop), "houghTop");
+		//win(2, 2).image(linked, "linked");
 
 		win.show();
 	}

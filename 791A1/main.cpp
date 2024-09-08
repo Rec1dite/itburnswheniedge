@@ -10,29 +10,10 @@ int main() {
 		inp = rgb2gray(inp);
 		array can = canny(inp, AF_CANNY_THRESHOLD_MANUAL, LOW_THRESH_RAT, HIGH_THRESH_RAT).as(f32);
 
-		// 1) Noise reduction
-		//array blur = Pipeline::noiseReduction(inp);
-		// 2) Gradient calculation
-		//array mag, dir;
-		//std::tie(mag, dir) = Pipeline::gradientCalculation(blur);
-		// 3) Edge thinning
-		//array grad = Pipeline::edgeThinning(dir, mag);
-		// 4) Thresholding
-		//array thresh = Pipeline::thresholding(grad);
-		// 5) Edge linking
-		//array hough, houghTop, linked;
-		//std::tie(hough, houghTop, linked) = Pipeline::edgeLinking(thresh, grad);
-		// Line drawing
-		//array canvas = constant(0, 50, 50);
-		//canvas = Pipeline::drawLine(canvas, 10, 10, 30, 40);
-		//canvas = Pipeline::drawLine(canvas, 5, 40, 8, 10);
-		//canvas = Pipeline::drawLine(canvas, 20, 20, 40, 20);
-		//canvas = Pipeline::drawLine(canvas, 1, 1, 1, 30);
-
 		//array result = Pipeline::compute(inp);
 
 		Window win(300, 300, "COS791 A1");
-		Anneal opt(10000, 0.001, 0.99, 400, inp, can, win);
+		Anneal opt(10000, 0.001, 0.99, 4000, inp, can, win, true);
 		Config best = opt.optimize();
 		
 		std::cout

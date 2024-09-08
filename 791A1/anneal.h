@@ -67,15 +67,16 @@ private:
 	}
 
     // Objective function
-    double score(Config& sol, bool show = true) {
+    double score(Config& sol) {
         if (sol.score != -1) { return sol.score; }
 
         Stages stages = Pipeline::compute(source, sol);
         array result = stages.thresh;
-        float score = Pipeline::meanSquareError(source, target);
+        float score = Pipeline::meanSquareError(result, target);
+        std::cout << "OBTAINED SCORE: " << score << std::endl;
 		sol.score = score;
 
-        if (debug && show) {
+        if (debug) {
             Pipeline::display(
                 win, source, target, stages.blur, stages.dir,
 				stages.mag, stages.grad, stages.thresh, stages.hough,
@@ -107,12 +108,16 @@ public:
             Config neighbor = randomNeighbor(current);
 
             //----- Compute objective delta -----//
+			// If current is worse than (>) neighbor, delta is negative
             double delta = score(neighbor) - score(current);
 
             //----- Accept/reject solution -----//
-            if (delta < 0 || (std::exp(-delta / currT) > randomFloat(0.0, 1.0))) {
-				std::cout << "ACCEPTED: " << delta << std::endl;
+            if (delta < 0) { // || (std::exp(-delta / currT) > randomFloat(0.0, 1.0))) {
+				std::cout << "ACCEPTED: " << delta << " with score " << neighbor.score << std::endl;
                 current = neighbor;
+            }
+            else {
+                std::cout << "REJECTED" << std::endl;
             }
 
             //----- Update best solution -----//
